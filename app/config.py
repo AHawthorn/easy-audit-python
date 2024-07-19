@@ -6,4 +6,5 @@ class Config:
     }
     EXPORT_FORMATS = ["PDF", "Word"]
     EXCEL_FILE_PATH = 'C:\\Users\\lenovo\\Desktop\\audit\\附注.xlsm'  # Excel 数据文件路径
-    OUT_WORD_FILE_PATH = 'C:\\Users\\lenovo\\Desktop\\audit\\更新后的目标文档.docx'  # Word 数据文件路径
+    OUT_WORD_FILE_PATH = 'C:\\Users\\lenovo\\Desktop\\audit\\更新后的目标文档.docx'  # 生成的Word文件路径
+    BASIC_EXCEL_FILE_PATH = 'C:\\Users\\lenovo\\Desktop\\audit\\3.报表.xlsx'  # 基本信息数据文件路径

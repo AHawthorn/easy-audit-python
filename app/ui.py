@@ -18,14 +18,28 @@ def export_action(template_var, report_type_var, export_format_var):
         messagebox.showwarning("Warning", "请确保所有选项都已选择")
 
 
+def center_window(root, width, height):
+    # 获取屏幕 宽、高
+    screenwidth = root.winfo_screenwidth()
+    screenheight = root.winfo_screenheight()
+
+    # 计算窗口居中的位置坐标
+    alignstr = '%dx%d+%d+%d' % (width, height, (screenwidth - width) / 2, (screenheight - height) / 2)
+
+    # 设置窗口大小和位置
+    root.geometry(alignstr)
+    root.resizable(width=False, height=False)  # 禁止用户改变窗口大小
+
+
 def main_ui():
     root = tk.Tk()
+    center_window(root, 500, 400)  # 传入窗口对象和窗口的宽高
     root.title("Easy Audit")
-    root.geometry("500x400")
+    # root.geometry("500x400")
     root.configure(bg="#f5f5f5")
 
     # 标签框提示文本样式
-    label_style = {"font": ("Arial", 12), "bg": "#f5f5f5"}
+    label_style = {"font": ("Arial", 10), "bg": "#f5f5f5"}
 
     # 下拉框变量
     template_var = tk.StringVar()
@@ -52,7 +66,7 @@ def main_ui():
     # 导出按钮
     export_button = tk.Button(root, text="导出",
                               command=lambda: export_action(template_var, report_type_var, export_format_var),
-                              font=("Arial", 12), bg="#4CAF50", fg="white", bd=0, relief="flat")
+                              font=("Arial", 13), bg="#4CAF50", fg="white", bd=2, relief="flat", width=17, height=1)
     export_button.pack(pady=30)
 
     # 按钮样式美化

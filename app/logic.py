@@ -1,10 +1,15 @@
+import re
+from datetime import datetime
+
 import openpyxl
 from docx import Document
-from docx.shared import Pt
-from docx.oxml.ns import qn
-from config import Config
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.shared import Pt, Inches
+
+from config import Config
+
 
 def read_excel(file_path):
     """读取Excel文件并返回工作簿对象"""
@@ -85,16 +90,22 @@ def set_table_borders(table):
 
     tbl.tblPr.append(tblBorders)
 
-def insert_table_into_doc(doc, table_data, placeholder):
+
+def insert_table_into_doc(doc, table_data, placeholder, replacements):
     """将表格插入到Word文档的指定位置"""
+    balance = calculate_balance(table_data)
+    report_date = replacements.get('报表截止日', '')
     for paragraph in doc.paragraphs:
         if placeholder in paragraph.text:
-            # 替换占位符段落
-            p = paragraph._element
+            sheet_name = placeholder.strip('«»')
+            sentence = f"截止{report_date}，公司{sheet_name}账面余额为{balance}元。"
 
-            # 在匹配内容后添加一个换行符
-            run = paragraph.add_run()
-            run.add_break()
+            # 在占位符下方插入新段落
+            new_paragraph = paragraph.insert_paragraph_before(sentence)
+            new_paragraph.paragraph_format.first_line_indent = Pt(22)
+            new_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
+            new_paragraph.paragraph_format.line_spacing = Pt(22)
+            new_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
 
             # 创建表格并设置样式
             tbl = doc.add_table(rows=0, cols=len(table_data[0]))
@@ -110,11 +121,11 @@ def insert_table_into_doc(doc, table_data, placeholder):
                     # 表头样式设置
                     if row_idx == 0:
                         set_cell_font(row[i], '宋体', 10, bold=True)
-                        row[i].paragraphs[0].alignment = 1  # 居中
+                        row[i].paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER  # 居中
                     # 表格最后一行如果包含“合计”，也要加粗且居中显示
                     elif cell_data and "合计" in str(cell_data):
                         set_cell_font(row[i], '宋体', 10, bold=True)
-                        row[i].paragraphs[0].alignment = 1  # 居中
+                        row[i].paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER  # 居中
                     else:
                         if isinstance(cell_data, (int, float)):
                             set_cell_font(row[i], 'Arial Narrow', 10)
@@ -128,7 +139,132 @@ def insert_table_into_doc(doc, table_data, placeholder):
             new_paragraph = doc.add_paragraph()
             new_paragraph.add_run('\n')
 
+            # 替换占位符段落
+            p = paragraph._element
+            p.addnext(tbl._element)
+            # p.getparent().remove(p)
+
             break
+
+def calculate_balance(table_data):
+    """计算表格最右侧一列数字的合计值，排除最后一行（如果包含“合计”）"""
+    balance = 0.0
+    for row_idx, row in enumerate(table_data):
+        if row_idx == len(table_data) - 1 and any("合计" in str(cell) for cell in row):
+            continue
+        try:
+            balance += float(row[-1])
+        except (ValueError, TypeError):
+            pass
+    return f'{balance:+,.2f}'
+
+
+def clean_placeholder(text):
+    """去除占位符中的空格"""
+    return re.sub(r'\s+', '', text)
+
+
+def extract_key_value_data(file_path, sheet_name):
+    """读取指定Excel文件和sheet页中的数据，返回<key, value>数据结构"""
+    workbook = openpyxl.load_workbook(file_path, data_only=True)
+    sheet = workbook[sheet_name]
+    data = {}
+
+    for row in sheet.iter_rows(min_row=2, min_col=3, values_only=False):
+        key_cell = row[0]
+        value_cell = row[1]
+
+        # 处理key
+        key = key_cell.value
+        if key is not None:
+            key = str(key).strip()
+            if key == '审计报告编号':
+                key = '报告编号'
+
+        # 处理value
+        value = value_cell.value
+        if value is not None:
+            if isinstance(value, datetime):
+                value = value.strftime('%Y-%m-%d')
+                if key == '报表截止日':
+                    data['报告年度'] = value[:4] + '年'  # 提取年份
+            elif isinstance(value, float):
+                value = f'{value:.2f}'
+            else:
+                value = str(value).strip()
+
+        if key and value:
+            data[key] = value
+
+    # 特殊处理报告日
+    if '审计报告日期' in data:
+        data['报告日'] = convert_date_to_chinese(data['审计报告日期'])
+
+    # 拼接企业信息为一个字符串
+    company_info_parts = [
+        data.get('企业全称', '') + "（以下简称“本公司”或“公司”），于" + data.get('企业成立日期',
+                                                                              '') + "成立，社会统一信用代码为" + data.get(
+            '营业执照号码', '') + "，发证机关为" + data.get('批准工商行政机关', '') + "。",
+        "法定代表人：" + data.get('法定代表人', ''),
+        "注册资本：人民币" + data.get('注册资本', '') + "万元",
+        "住所地：" + data.get('住所地', ''),
+        "经营范围：" + data.get('经营范围', '') + "。"
+    ]
+
+    # 将多个部分合并为一个字符串，使用特定标记进行分隔
+    data['企业信息'] = "##".join(company_info_parts)
+
+    return data
+
+
+def replace_placeholder_in_paragraph(paragraph, replacements):
+    """在段落中用replacements中的值替换«key»结构的占位符，并保持原有的样式"""
+    for key, value in replacements.items():
+        # placeholder = f'«{key}»'
+        cleaned_placeholder = clean_placeholder(key)
+
+        runs = paragraph.runs
+        for i in range(1, len(runs) - 1):
+            prev_run_text = clean_placeholder(runs[i - 1].text.strip())
+            current_run_text = clean_placeholder(runs[i].text.strip())
+            next_run_text = clean_placeholder(runs[i + 1].text.strip())
+
+            if prev_run_text == '«' and current_run_text == cleaned_placeholder and next_run_text == '»':
+                runs[i - 1].text = ''
+                if cleaned_placeholder == '企业信息':
+                    # 插入新段落
+                    parts = value.split('##')
+                    for part in parts:
+                        new_paragraph = paragraph.insert_paragraph_before(part)
+                        new_paragraph.paragraph_format.first_line_indent = Pt(22)
+                        new_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
+                        new_paragraph.paragraph_format.line_spacing = Pt(22)
+                    runs[i].text = ''
+                else:
+                    runs[i].text = value
+                runs[i + 1].text = ''
+
+
+def replace_placeholders_in_doc(doc, replacements):
+    """遍历Word文档的所有部分，替换占位符"""
+    for paragraph in doc.paragraphs:
+        replace_placeholder_in_paragraph(paragraph, replacements)
+
+    for section in doc.sections:
+        header = section.header
+        for paragraph in header.paragraphs:
+            replace_placeholder_in_paragraph(paragraph, replacements)
+
+        footer = section.footer
+        for paragraph in footer.paragraphs:
+            replace_placeholder_in_paragraph(paragraph, replacements)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_placeholder_in_paragraph(paragraph, replacements)
+
 
 def export_report(template, report_type, export_format):
     """导出报告"""
@@ -143,13 +279,19 @@ def export_report(template, report_type, export_format):
     # 提取科目名称
     subjects = extract_subjects(workbook)
 
+    # 读取基本信息表数据
+    key_value_data = extract_key_value_data(Config.BASIC_EXCEL_FILE_PATH, '基本信息表')
+
     # 读取Word文档
     doc = Document(word_path)
+
+    # 替换Word文档中的占位符
+    replace_placeholders_in_doc(doc, key_value_data)
 
     # 提取并插入表格数据
     for subject in subjects:
         table_data = extract_table_data(workbook, subject)
-        insert_table_into_doc(doc, table_data, f'«{subject}»')
+        insert_table_into_doc(doc, table_data, f'«{subject}»',key_value_data)
 
     # 保存修改后的Word文档
     output_path = Config.OUT_WORD_FILE_PATH
@@ -160,3 +302,44 @@ def export_report(template, report_type, export_format):
         pass
 
     return output_path
+
+
+def convert_date_to_chinese(date_str):
+    """将日期字符串转换为中文大写日期格式"""
+    chinese_numerals = {
+        '0': '零', '1': '一', '2': '二', '3': '三', '4': '四', '5': '五',
+        '6': '六', '7': '七', '8': '八', '9': '九'
+    }
+    year, month, day = date_str.split('-')
+
+    def convert_year(y):
+        return ''.join(chinese_numerals[digit] for digit in y) + '年'
+
+    def convert_month(m):
+        if m.startswith('0'):
+            return chinese_numerals[m[1]] + '月'
+        elif m == '10':
+            return '十月'
+        else:
+            return '十' + chinese_numerals[m[1]] + '月' if m.startswith('1') else chinese_numerals[m[0]] + '月'
+
+    def convert_day(d):
+        if d.startswith('0'):
+            return chinese_numerals[d[1]] + '日'
+        elif d == '10':
+            return '十日'
+        elif d.startswith('1'):
+            return '十' + chinese_numerals[d[1]] + '日'
+        else:
+            return '二十' + chinese_numerals[d[1]] + '日' if d.startswith('2') else '三十' + chinese_numerals[
+                d[1]] + '日'
+
+    return convert_year(year) + convert_month(month) + convert_day(day)
+
+
+def add_paragraph_before(paragraph, text, indent=False):
+    """在段落前添加一个新的段落，可以选择首行缩进"""
+    new_paragraph = paragraph.insert_paragraph_before(text)
+    if indent:
+        new_paragraph.paragraph_format.first_line_indent = Inches(0.2)
+    return new_paragraph
