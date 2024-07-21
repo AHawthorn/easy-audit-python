@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from logic import export_report
+from app.logic import export_report
 
 
 def export_action(template_var, report_type_var, export_format_var):

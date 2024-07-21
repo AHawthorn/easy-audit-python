@@ -8,7 +8,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, Inches
 
-from config import Config
+from app.config import Config
 
 
 def read_excel(file_path):
@@ -91,73 +91,66 @@ def set_table_borders(table):
     tbl.tblPr.append(tblBorders)
 
 
-def insert_table_into_doc(doc, table_data, placeholder, replacements):
+def insert_table_into_doc(doc, table_data, replacements, sheet_name, paragraph):
     """将表格插入到Word文档的指定位置"""
     balance = calculate_balance(table_data)
     report_date = replacements.get('报表截止日', '')
-    for paragraph in doc.paragraphs:
-        if placeholder in paragraph.text:
-            sheet_name = placeholder.strip('«»')
-            sentence = f"截止{report_date}，公司{sheet_name}账面余额为{balance}元。"
+    sentence = f"截止{report_date}，公司{sheet_name}账面余额为{balance}元。"
 
-            # 在占位符下方插入新段落
-            new_paragraph = paragraph.insert_paragraph_before(sentence)
-            new_paragraph.paragraph_format.first_line_indent = Pt(22)
-            new_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
-            new_paragraph.paragraph_format.line_spacing = Pt(22)
-            new_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+    # 创建表格段落
+    tbl = doc.add_table(rows=0, cols=len(table_data[0]))
+    tbl.style = 'Table Grid'
+    tbl.autofit = False
 
-            # 创建表格并设置样式
-            tbl = doc.add_table(rows=0, cols=len(table_data[0]))
-            tbl.style = 'Table Grid'
-            tbl.autofit = False
+    # 插入表格数据
+    for row_idx, row_data in enumerate(table_data):
+        row = tbl.add_row().cells
+        for i, cell_data in enumerate(row_data):
+            row[i].text = str(cell_data)
 
-            # 插入表格数据
-            for row_idx, row_data in enumerate(table_data):
-                row = tbl.add_row().cells
-                for i, cell_data in enumerate(row_data):
-                    row[i].text = str(cell_data)
+            # 表头样式设置
+            if row_idx == 0:
+                set_cell_font(row[i], '宋体', 10, bold=True)
+                row[i].paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER  # 居中
+            # 表格最后一行如果包含“合计”，也要加粗且居中显示
+            elif cell_data and "合计" in str(cell_data):
+                set_cell_font(row[i], '宋体', 10, bold=True)
+                row[i].paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER  # 居中
+            else:
+                if isinstance(cell_data, (int, float)):
+                    set_cell_font(row[i], 'Arial Narrow', 10)
+                else:
+                    set_cell_font(row[i], '宋体', 10)
 
-                    # 表头样式设置
-                    if row_idx == 0:
-                        set_cell_font(row[i], '宋体', 10, bold=True)
-                        row[i].paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER  # 居中
-                    # 表格最后一行如果包含“合计”，也要加粗且居中显示
-                    elif cell_data and "合计" in str(cell_data):
-                        set_cell_font(row[i], '宋体', 10, bold=True)
-                        row[i].paragraphs[0].alignment = WD_PARAGRAPH_ALIGNMENT.CENTER  # 居中
-                    else:
-                        if isinstance(cell_data, (int, float)):
-                            set_cell_font(row[i], 'Arial Narrow', 10)
-                        else:
-                            set_cell_font(row[i], '宋体', 10)
+    # 设置表格的上下两条外边框加粗，左右两条外边框不显示
+    set_table_borders(tbl)
 
-            # 设置表格的上下两条外边框加粗，左右两条外边框不显示
-            set_table_borders(tbl)
+    # 插入表格段落到句子段落下方
+    paragraph._element.addnext(tbl._element)
 
-            # 在表格后插入两个换行符以避免粘连
-            new_paragraph = doc.add_paragraph()
-            new_paragraph.add_run('\n')
+    # 创建句子段落并插入到表格前面
+    sentence_paragraph = doc.add_paragraph(sentence)
+    sentence_paragraph.paragraph_format.first_line_indent = Inches(0.2)
+    sentence_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
+    sentence_paragraph.paragraph_format.line_spacing = Pt(22)
+    sentence_paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
 
-            # 替换占位符段落
-            p = paragraph._element
-            p.addnext(tbl._element)
-            # p.getparent().remove(p)
-
-            break
-
+    tbl._element.addprevious(sentence_paragraph._element)
 def calculate_balance(table_data):
-    """计算表格最右侧一列数字的合计值，排除最后一行（如果包含“合计”）"""
+    """计算表格账面余额，如果最后一行有合计并且表格最后一列是期末余额，则取合计行的最右侧单元格，否则为0.00"""
     balance = 0.0
-    for row_idx, row in enumerate(table_data):
-        if row_idx == len(table_data) - 1 and any("合计" in str(cell) for cell in row):
-            continue
-        try:
-            balance += float(row[-1])
-        except (ValueError, TypeError):
-            pass
-    return f'{balance:+,.2f}'
 
+    # 检查最后一行是否包含“合计”并且最后一列是“期末余额”
+    if len(table_data) > 1 and "合计" in str(table_data[-1][0]) and "期末金额" in str(table_data[0][-1]):
+        try:
+            balance_str = table_data[-1][-1].replace(',', '')  # 去掉逗号
+            balance = float(balance_str)
+        except (ValueError, TypeError):
+            balance = 0.0
+    else:
+        balance = 0.0
+
+    return f'{balance:,.2f}'
 
 def clean_placeholder(text):
     """去除占位符中的空格"""
@@ -245,8 +238,15 @@ def replace_placeholder_in_paragraph(paragraph, replacements):
                 runs[i + 1].text = ''
 
 
-def replace_placeholders_in_doc(doc, replacements):
-    """遍历Word文档的所有部分，替换占位符"""
+def replace_placeholders_in_doc(doc, replacements, sheet_names, workbook):
+    """遍历Word文档的所有部分，替换占位符，并清空指定关键词之间的段落，插入sheet页名称和对应的财务表格"""
+    # 清空“五、财务报表主要项目注释”和“六、或有事项”之间的所有段落
+    clear_paragraphs_between_keywords(doc, "五、财务报表主要项目注释", "六、或有事项")
+
+    # 插入sheet页名称和对应的财务表格
+    insert_sheet_names_and_tables(doc, "五、财务报表主要项目注释", "六、或有事项", sheet_names, workbook, replacements)
+
+    # 替换占位符
     for paragraph in doc.paragraphs:
         replace_placeholder_in_paragraph(paragraph, replacements)
 
@@ -286,12 +286,12 @@ def export_report(template, report_type, export_format):
     doc = Document(word_path)
 
     # 替换Word文档中的占位符
-    replace_placeholders_in_doc(doc, key_value_data)
+    replace_placeholders_in_doc(doc, key_value_data,workbook.sheetnames,workbook)
 
     # 提取并插入表格数据
-    for subject in subjects:
-        table_data = extract_table_data(workbook, subject)
-        insert_table_into_doc(doc, table_data, f'«{subject}»',key_value_data)
+    # for subject in subjects:
+    #     table_data = extract_table_data(workbook, subject)
+    #     insert_table_into_doc(doc, table_data, f'«{subject}»',key_value_data)
 
     # 保存修改后的Word文档
     output_path = Config.OUT_WORD_FILE_PATH
@@ -336,10 +336,72 @@ def convert_date_to_chinese(date_str):
 
     return convert_year(year) + convert_month(month) + convert_day(day)
 
+def clear_paragraphs_between_keywords(doc, start_keyword, end_keyword):
+    """清空Word文档中两个关键词之间的所有段落"""
+    start_found = False
+    paragraphs_to_clear = []
 
+    for paragraph in doc.paragraphs:
+        if start_keyword in paragraph.text:
+            start_found = True
+
+        if start_found:
+            paragraphs_to_clear.append(paragraph)
+
+        if end_keyword in paragraph.text and start_found:
+            break
+
+    for paragraph in paragraphs_to_clear:
+        if start_keyword not in paragraph.text and end_keyword not in paragraph.text:
+            p = paragraph._element
+            p.getparent().remove(p)
 def add_paragraph_before(paragraph, text, indent=False):
     """在段落前添加一个新的段落，可以选择首行缩进"""
     new_paragraph = paragraph.insert_paragraph_before(text)
     if indent:
         new_paragraph.paragraph_format.first_line_indent = Inches(0.2)
     return new_paragraph
+
+
+def insert_sheet_names_between_keywords(doc, start_keyword, end_keyword, sheet_names):
+    """在两个关键词之间插入sheet页名称，并添加序号"""
+    start_found = False
+    paragraphs_to_insert = []
+
+    for paragraph in doc.paragraphs:
+        if start_keyword in paragraph.text:
+            start_found = True
+
+        if end_keyword in paragraph.text and start_found:
+            for i, sheet_name in enumerate(sheet_names, start=1):
+                new_paragraph = paragraph.insert_paragraph_before(f"{i}. {sheet_name}")
+                new_paragraph.paragraph_format.first_line_indent = Inches(0.2)
+                new_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
+                new_paragraph.paragraph_format.line_spacing = Pt(22)
+            break
+
+def insert_sheet_names_and_tables(doc, start_keyword, end_keyword, sheet_names, workbook, replacements):
+    """在两个关键词之间插入sheet页名称，并添加序号，同时插入对应的财务表格"""
+    excluded_sheets = {"目录", "资表模板", "利表模板"}
+    start_found = False
+    counter = 1
+
+    for paragraph in doc.paragraphs:
+        if start_keyword in paragraph.text:
+            start_found = True
+
+        if end_keyword in paragraph.text and start_found:
+            for sheet_name in sheet_names:
+                if sheet_name not in excluded_sheets:
+                    # 插入带序号的 sheet 页名称
+                    new_paragraph = paragraph.insert_paragraph_before(f"{counter}、{sheet_name}")
+                    new_paragraph.paragraph_format.first_line_indent = Inches(0.2)
+                    new_paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.AT_LEAST
+                    new_paragraph.paragraph_format.line_spacing = Pt(22)
+
+                    # 插入模板替换后的句子和对应的财务表格
+                    table_data = extract_table_data(workbook, sheet_name)
+                    insert_table_into_doc(doc, table_data, replacements, sheet_name, new_paragraph)
+
+                    counter += 1
+            break
