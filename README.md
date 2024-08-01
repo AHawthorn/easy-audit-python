@@ -1,16 +1,19 @@
+# 审计报表自动化生成工具
+## 介绍
+该工具主要用于企业年审报告自动化生成，降低审计人员的工作负担
+## 功能模块
+> 高新企业年报(Word版已完成，PDF版待完成)  
+> 普通企业年报(Word版已完成，PDF版待完成)  
+> 高新企业费用专项报告(Word版待完成，PDF版待完成)  
+> 普通企业费用专项报告(Word版待完成，PDF版待完成)  
+> 高新企业收入专项报告(Word版待完成，PDF版待完成)  
+> 普通企业收入专项报告(Word版待完成，PDF版待完成)
 
-审计项目
-# 功能模块
-## 年报
-已完成
-## 费用专项
-## 收入专项
-
-# 部署
-
-1. 生成easy-audit.spec文件，执行命令： pyinstaller --onefile --windowed --name easy-audit app/main.py
-2. 修改easy-audit.spec文件：  
-
+## 部署
+### 1. 生成easy-audit.spec文件
+> 执行命令： pyinstaller --onefile --windowed --name easy-audit app/main.py
+### 2. 修改easy-audit.spec文件 
+easy-audit.spec文件内容如下：
 ```
 import os
 
@@ -70,5 +73,5 @@ coll = COLLECT(
 )
 ```
 
-3. 执行命令：
-pyinstaller easy-audit.spec
+### 3. 执行命令
+> pyinstaller easy-audit.spec
